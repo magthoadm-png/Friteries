@@ -184,18 +184,21 @@ async function overpass(lat, lon, rad){
  nwr(around:${rad},${lat},${lon})["amenity"~"fast_food|restaurant|cafe"]["cuisine"~"fries|friture|chips|fish_and_chips|sandwich|snack",i];
 );
 out center tags;`;
-  let lastErr = null;
+  const errs = [];
   for (const url of SERVERS) {
+    const host = new URL(url).hostname;
     try {
-      setStatus("Recherche des friteries ("+new URL(url).hostname+")...");
-      const r = await fetchT(url, {method:"POST", body:"data="+encodeURIComponent(q)}, 25000);
-      if (!r.ok) { lastErr = new Error("Serveur "+r.status); continue; }
+      setStatus("Recherche en cours ("+host+")...");
+      const r = await fetchT(url+"?data="+encodeURIComponent(q), {}, 15000);
+      if (!r.ok) { errs.push(host+" : code "+r.status); continue; }
       const j = await r.json();
-      if (j.remark && /timed out|out of memory/i.test(j.remark) && !j.elements.length) { lastErr = new Error("Serveur surchargé"); continue; }
+      if (j.remark && /timed out|out of memory/i.test(j.remark) && !j.elements.length) { errs.push(host+" : surchargé"); continue; }
       return j.elements;
-    } catch(e){ lastErr = e; }
+    } catch(e){
+      errs.push(host+" : "+(e.name==="AbortError" ? "délai dépassé" : e.message));
+    }
   }
-  throw new Error("Tous les serveurs sont indisponibles ou lents ("+(lastErr && lastErr.name==="AbortError" ? "délai dépassé" : (lastErr ? lastErr.message : "inconnu"))+"). Appuie sur Relancer.");
+  throw new Error(errs.join(" | ")+". Appuie sur Relancer.");
 }
  
 /* ---------- Catégories ---------- */
