@@ -5,19 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Friteries</title>
 <style>
-  :root { --bg:#fff8e7; --fg:#222; --accent:#d62828; --card:#fff; --muted:#666; }
+  :root { --bg:#fff8e7; --fg:#222; --accent:#d62828; --card:#fff; --muted:#666; --line:#ccc; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#1b1b1b; --fg:#eee; --accent:#ff6b6b; --card:#2a2a2a; --muted:#aaa; }
+    :root { --bg:#1b1b1b; --fg:#eee; --accent:#ff6b6b; --card:#2a2a2a; --muted:#aaa; --line:#555; }
   }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px; max-width:640px; margin:auto; }
+  body { margin:auto; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px; max-width:640px; }
   h1 { font-size:1.4rem; margin:0 0 12px; }
-  form { display:flex; gap:8px; margin-bottom:8px; }
-  input[type=text] { flex:1; padding:12px; font-size:1rem; border:1px solid #bbb; border-radius:8px; background:var(--card); color:var(--fg); }
+  .box { position:relative; }
+  input[type=text] { width:100%; padding:12px; font-size:1rem; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); }
+  #sug { position:absolute; left:0; right:0; top:100%; z-index:10; background:var(--card); border:1px solid var(--line); border-radius:8px; margin-top:4px; max-height:300px; overflow:auto; display:none; box-shadow:0 4px 12px rgba(0,0,0,.2); }
+  #sug div { padding:12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  #sug div:last-child { border-bottom:0; }
+  #sug small { color:var(--muted); display:block; }
   button { padding:12px 16px; font-size:1rem; border:0; border-radius:8px; background:var(--accent); color:#fff; }
-  button.sec { background:var(--card); color:var(--fg); border:1px solid #bbb; }
-  .row { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
-  select { padding:10px; border-radius:8px; border:1px solid #bbb; background:var(--card); color:var(--fg); font-size:1rem; }
+  button.sec { background:var(--card); color:var(--fg); border:1px solid var(--line); }
+  .row { display:flex; gap:8px; align-items:center; margin:10px 0 12px; flex-wrap:wrap; }
+  select { padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); font-size:1rem; }
   .card { background:var(--card); border-radius:10px; padding:12px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.15); }
   .card h2 { font-size:1.05rem; margin:0 0 4px; }
   .dist { color:var(--muted); font-size:.9rem; }
@@ -25,16 +29,18 @@
   .none { color:var(--muted); font-style:italic; }
   a { color:var(--accent); }
   .links { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; font-size:.95rem; }
-  #status { margin:8px 0; color:var(--muted); }
+  #status { margin:8px 0; color:var(--muted); min-height:1.2em; }
   footer { margin-top:20px; font-size:.8rem; color:var(--muted); }
 </style>
 </head>
 <body>
 <h1>Friteries autour d'une ville</h1>
-<form id="f">
-  <input type="text" id="q" placeholder="Ville (ex. Durbuy)" autocomplete="off" required>
-  <button type="submit">Chercher</button>
-</form>
+
+<div class="box">
+  <input type="text" id="q" placeholder="Code postal ou début du nom (ex. 7100, Durb)" autocomplete="off" inputmode="text">
+  <div id="sug"></div>
+</div>
+
 <div class="row">
   <label for="r">Rayon</label>
   <select id="r">
@@ -44,15 +50,26 @@
     <option value="15000">15 km</option>
   </select>
   <button type="button" class="sec" id="geo">Ma position</button>
+  <button type="button" id="again" style="display:none">Relancer</button>
 </div>
+<div class="row" id="filters">
+  <label><input type="checkbox" class="flt" value="friterie" checked> Friteries</label>
+  <label><input type="checkbox" class="flt" value="snack" checked> Snacks</label>
+  <label><input type="checkbox" class="flt" value="sandwicherie" checked> Sandwicheries</label>
+</div>
+
 <div id="status"></div>
 <div id="out"></div>
 <footer>Données OpenStreetMap. Les horaires dépendent des contributeurs. Vérifie par téléphone avant de te déplacer.</footer>
 
 <script>
 const $ = id => document.getElementById(id);
-const status = t => $("status").textContent = t;
+const setStatus = t => $("status").textContent = t;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+let current = null;   // {lat, lon, label}
+let timer = null;
+let reqId = 0;
 
 function dist(a,b,c,d){
   const R=6371, rad=x=>x*Math.PI/180;
@@ -67,83 +84,201 @@ function fr(h){
     .map(s=>s.replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH|off)\b/g,m=>map[m])).join("\n");
 }
 
-async function geocode(q){
-  const u="https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=be&q="+encodeURIComponent(q);
-  const r=await fetch(u,{headers:{"Accept-Language":"fr"}});
-  if(!r.ok) throw new Error("Géocodage indisponible");
-  const j=await r.json();
-  if(!j.length) throw new Error("Ville introuvable en Belgique");
-  return {lat:+j[0].lat, lon:+j[0].lon, name:j[0].display_name.split(",").slice(0,2).join(",")};
+async function fetchT(url, opts, ms){
+  const c = new AbortController();
+  const t = setTimeout(()=>c.abort(), ms);
+  try { return await fetch(url, {...opts, signal:c.signal}); }
+  finally { clearTimeout(t); }
 }
 
-async function overpass(lat,lon,rad){
-  const q=`[out:json][timeout:25];
+/* ---------- Suggestions ---------- */
+async function suggest(text){
+  const t = text.trim();
+  if (t.length < 2) return [];
+  // Code postal : Nominatim
+  if (/^\d{3,4}$/.test(t)) {
+    const u = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=10&countrycodes=be&postalcode="+encodeURIComponent(t)+"&accept-language=fr";
+    const r = await fetchT(u, {}, 10000);
+    if (!r.ok) throw new Error("Service de recherche indisponible");
+    const j = await r.json();
+    return j.map(x=>({
+      lat:+x.lat, lon:+x.lon,
+      main:(x.address.village||x.address.town||x.address.city||x.address.municipality||x.name||x.display_name.split(",")[0]),
+      sub:[x.address.postcode, x.address.county||x.address.state].filter(Boolean).join(" · ")
+    }));
+  }
+  // Nom : Photon (conçu pour l'autocomplétion)
+  const u = "https://photon.komoot.io/api/?limit=15&lang=fr&bbox=2.5,49.45,6.45,51.55&q="+encodeURIComponent(t);
+  const r = await fetchT(u, {}, 10000);
+  if (!r.ok) throw new Error("Service de recherche indisponible");
+  const j = await r.json();
+  const seen = new Set(), out = [];
+  for (const f of j.features) {
+    const p = f.properties;
+    if (p.countrycode !== "BE") continue;
+    const main = p.name || p.city;
+    const key = main+"|"+(p.postcode||"")+"|"+(p.state||"");
+    if (!main || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      lon:f.geometry.coordinates[0], lat:f.geometry.coordinates[1],
+      main, sub:[p.postcode, p.county||p.state].filter(Boolean).join(" · ")
+    });
+  }
+  return out.slice(0,8);
+}
+
+function showSug(list){
+  const box = $("sug");
+  if (!list.length) { box.style.display="none"; return; }
+  box.innerHTML = "";
+  list.forEach(s=>{
+    const d = document.createElement("div");
+    d.innerHTML = esc(s.main)+(s.sub?"<small>"+esc(s.sub)+"</small>":"");
+    d.addEventListener("click",()=>pick(s));
+    box.appendChild(d);
+  });
+  box.style.display = "block";
+}
+
+function pick(s){
+  $("sug").style.display = "none";
+  $("q").value = s.main + (s.sub ? " ("+s.sub.split(" · ")[0]+")" : "");
+  current = {lat:s.lat, lon:s.lon, label:s.main};
+  run();
+}
+
+$("q").addEventListener("input", ()=>{
+  clearTimeout(timer);
+  const v = $("q").value;
+  if (v.trim().length < 2) { showSug([]); return; }
+  timer = setTimeout(async ()=>{
+    const id = ++reqId;
+    try {
+      setStatus("Recherche de la localité...");
+      const list = await suggest(v);
+      if (id !== reqId) return;
+      showSug(list);
+      setStatus(list.length ? "" : "Aucune localité trouvée");
+    } catch(e){ if (id === reqId) setStatus("Erreur : "+e.message); }
+  }, 350);
+});
+
+document.addEventListener("click", e=>{
+  if (!e.target.closest(".box")) $("sug").style.display = "none";
+});
+
+/* ---------- Overpass avec serveurs de secours ---------- */
+const SERVERS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter"
+];
+
+async function overpass(lat, lon, rad){
+  const q = `[out:json][timeout:20];
 (
- nwr(around:${rad},${lat},${lon})["amenity"~"fast_food|restaurant|cafe"]["cuisine"~"fries|friture|chips|fish_and_chips",i];
- nwr(around:${rad},${lat},${lon})["name"~"friterie|frituur|fritkot|friture|frit|baraque à frites",i];
+ nwr(around:${rad},${lat},${lon})["name"~"friterie|frituur|fritkot|friture|frit|baraque|snack|sandwich|broodje|baguette|tartine",i]["amenity"~"fast_food|restaurant|cafe|food_court|bar|pub"];
+ nwr(around:${rad},${lat},${lon})["name"~"friterie|frituur|fritkot|friture|snack|sandwich|broodje",i]["shop"];
+ nwr(around:${rad},${lat},${lon})["shop"="sandwich"];
+ nwr(around:${rad},${lat},${lon})["amenity"~"fast_food|restaurant|cafe"]["cuisine"~"fries|friture|chips|fish_and_chips|sandwich|snack",i];
 );
 out center tags;`;
-  const r=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(q)});
-  if(!r.ok) throw new Error("Service de données occupé, réessaie dans un instant");
-  return (await r.json()).elements;
+  let lastErr = null;
+  for (const url of SERVERS) {
+    try {
+      setStatus("Recherche des friteries ("+new URL(url).hostname+")...");
+      const r = await fetchT(url, {method:"POST", body:"data="+encodeURIComponent(q)}, 25000);
+      if (!r.ok) { lastErr = new Error("Serveur "+r.status); continue; }
+      const j = await r.json();
+      if (j.remark && /timed out|out of memory/i.test(j.remark) && !j.elements.length) { lastErr = new Error("Serveur surchargé"); continue; }
+      return j.elements;
+    } catch(e){ lastErr = e; }
+  }
+  throw new Error("Tous les serveurs sont indisponibles ou lents ("+(lastErr && lastErr.name==="AbortError" ? "délai dépassé" : (lastErr ? lastErr.message : "inconnu"))+"). Appuie sur Relancer.");
 }
 
-function render(items,lat,lon){
-  const out=$("out"); out.innerHTML="";
-  if(!items.length){ out.innerHTML='<p class="none">Aucune friterie trouvée. Augmente le rayon.</p>'; return; }
+/* ---------- Catégories ---------- */
+const LABELS = {friterie:"Friterie", snack:"Snack", sandwicherie:"Sandwicherie"};
+function cats(t){
+  const n = ((t.name||"")+" "+(t.cuisine||"")).toLowerCase();
+  const c = [];
+  if (/friterie|frituur|fritkot|friture|frit|baraque|fries|chips/.test(n)) c.push("friterie");
+  if (/sandwich|broodje|baguette|tartine/.test(n) || t.shop === "sandwich") c.push("sandwicherie");
+  if (/snack/.test(n)) c.push("snack");
+  if (!c.length) c.push("snack");
+  return c;
+}
+let lastItems = [];
+function activeFilters(){
+  return [...document.querySelectorAll(".flt:checked")].map(x=>x.value);
+}
+document.querySelectorAll(".flt").forEach(x=>x.addEventListener("change", ()=>{
+  render(lastItems);
+  const n = document.querySelectorAll("#out .card").length;
+  if (current) setStatus(n+" résultat(s) autour de "+current.label);
+}));
+
+/* ---------- Affichage ---------- */
+function render(all){
+  const out = $("out"); out.innerHTML = "";
+  const f = activeFilters();
+  const items = all.filter(e=>e.cats.some(c=>f.includes(c)));
+  if (!items.length) { out.innerHTML = '<p class="none">Rien de référencé avec ces filtres dans ce rayon. Augmente le rayon.</p>'; return; }
   items.forEach(e=>{
-    const t=e.tags||{};
-    const name=t.name||"Friterie (sans nom)";
-    const addr=[t["addr:street"],t["addr:housenumber"],t["addr:city"]].filter(Boolean).join(" ");
-    const phone=t.phone||t["contact:phone"];
-    const hours=t.opening_hours?esc(fr(t.opening_hours)):'<span class="none">Horaires non renseignés</span>';
-    const maps="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(name+" "+(addr||e.lat+","+e.lon));
-    const nav="https://www.google.com/maps/dir/?api=1&destination="+e.lat+","+e.lon+"&travelmode=walking";
-    const d=document.createElement("div"); d.className="card";
-    d.innerHTML=`<h2>${esc(name)}</h2>
-      <div class="dist">${e.d.toFixed(1)} km${addr?" · "+esc(addr):""}</div>
+    const t = e.tags || {};
+    const name = t.name || "Établissement (sans nom)";
+    const addr = [t["addr:street"], t["addr:housenumber"], t["addr:city"]].filter(Boolean).join(" ");
+    const phone = t.phone || t["contact:phone"];
+    const hours = t.opening_hours ? esc(fr(t.opening_hours)) : '<span class="none">Horaires non renseignés</span>';
+    const maps = "https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(name+" "+(addr || e.lat+","+e.lon));
+    const nav = "https://www.google.com/maps/dir/?api=1&destination="+e.lat+","+e.lon+"&travelmode=walking";
+    const d = document.createElement("div"); d.className = "card";
+    d.innerHTML = `<h2>${esc(name)}</h2>
+      <div class="dist">${e.cats.map(c=>LABELS[c]).join(" / ")} · ${e.d.toFixed(1)} km${addr ? " · "+esc(addr) : ""}</div>
       <div class="hours">${hours}</div>
       <div class="links">
         <a href="${maps}" target="_blank" rel="noopener">Fiche Google</a>
         <a href="${nav}" target="_blank" rel="noopener">Itinéraire</a>
-        ${phone?`<a href="tel:${esc(phone.replace(/\s/g,""))}">${esc(phone)}</a>`:""}
+        ${phone ? `<a href="tel:${esc(phone.replace(/\s/g,""))}">${esc(phone)}</a>` : ""}
       </div>`;
     out.appendChild(d);
   });
 }
 
-async function run(lat,lon,label){
-  try{
-    status("Recherche autour de "+label+"...");
-    const els=await overpass(lat,lon,+$("r").value);
-    const seen=new Set(), items=[];
+async function run(){
+  if (!current) return;
+  const {lat, lon, label} = current;
+  $("out").innerHTML = "";
+  $("again").style.display = "none";
+  try {
+    const els = await overpass(lat, lon, +$("r").value);
+    const seen = new Set(), items = [];
     els.forEach(e=>{
-      const la=e.lat??e.center?.lat, lo=e.lon??e.center?.lon;
-      if(la==null||seen.has(e.type+e.id)) return;
+      const la = e.lat ?? (e.center && e.center.lat), lo = e.lon ?? (e.center && e.center.lon);
+      if (la == null || seen.has(e.type+e.id)) return;
       seen.add(e.type+e.id);
-      e.lat=la; e.lon=lo; e.d=dist(lat,lon,la,lo); items.push(e);
+      e.lat = la; e.lon = lo; e.d = dist(lat, lon, la, lo); e.cats = cats(e.tags || {}); items.push(e);
     });
     items.sort((a,b)=>a.d-b.d);
-    status(items.length+" résultat(s) autour de "+label);
-    render(items,lat,lon);
-  }catch(err){ status("Erreur : "+err.message); }
+    lastItems = items;
+    render(items);
+    setStatus(document.querySelectorAll("#out .card").length+" résultat(s) autour de "+label);
+  } catch(err){
+    setStatus("Erreur : "+err.message);
+    $("again").style.display = "inline-block";
+  }
 }
 
-$("f").addEventListener("submit",async ev=>{
-  ev.preventDefault();
-  try{
-    status("Localisation...");
-    const g=await geocode($("q").value.trim());
-    run(g.lat,g.lon,g.name);
-  }catch(err){ status("Erreur : "+err.message); }
-});
+$("again").addEventListener("click", run);
+$("r").addEventListener("change", ()=>{ if (current) run(); });
 
-$("geo").addEventListener("click",()=>{
-  if(!navigator.geolocation){ status("Géolocalisation non disponible"); return; }
-  status("Position en cours...");
+$("geo").addEventListener("click", ()=>{
+  if (!navigator.geolocation) { setStatus("Géolocalisation non disponible"); return; }
+  setStatus("Position en cours...");
   navigator.geolocation.getCurrentPosition(
-    p=>run(p.coords.latitude,p.coords.longitude,"ta position"),
-    ()=>status("Position refusée"));
+    p=>{ current = {lat:p.coords.latitude, lon:p.coords.longitude, label:"ta position"}; $("q").value=""; run(); },
+    ()=>setStatus("Position refusée"));
 });
 </script>
 </body>
