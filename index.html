@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Friteries</title>
+<style>
+  :root { --bg:#fff8e7; --fg:#222; --accent:#d62828; --card:#fff; --muted:#666; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1b1b1b; --fg:#eee; --accent:#ff6b6b; --card:#2a2a2a; --muted:#aaa; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px; max-width:640px; margin:auto; }
+  h1 { font-size:1.4rem; margin:0 0 12px; }
+  form { display:flex; gap:8px; margin-bottom:8px; }
+  input[type=text] { flex:1; padding:12px; font-size:1rem; border:1px solid #bbb; border-radius:8px; background:var(--card); color:var(--fg); }
+  button { padding:12px 16px; font-size:1rem; border:0; border-radius:8px; background:var(--accent); color:#fff; }
+  button.sec { background:var(--card); color:var(--fg); border:1px solid #bbb; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+  select { padding:10px; border-radius:8px; border:1px solid #bbb; background:var(--card); color:var(--fg); font-size:1rem; }
+  .card { background:var(--card); border-radius:10px; padding:12px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .card h2 { font-size:1.05rem; margin:0 0 4px; }
+  .dist { color:var(--muted); font-size:.9rem; }
+  .hours { margin:6px 0; font-size:.95rem; white-space:pre-line; }
+  .none { color:var(--muted); font-style:italic; }
+  a { color:var(--accent); }
+  .links { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; font-size:.95rem; }
+  #status { margin:8px 0; color:var(--muted); }
+  footer { margin-top:20px; font-size:.8rem; color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>Friteries autour d'une ville</h1>
+<form id="f">
+  <input type="text" id="q" placeholder="Ville (ex. Durbuy)" autocomplete="off" required>
+  <button type="submit">Chercher</button>
+</form>
+<div class="row">
+  <label for="r">Rayon</label>
+  <select id="r">
+    <option value="3000">3 km</option>
+    <option value="5000" selected>5 km</option>
+    <option value="10000">10 km</option>
+    <option value="15000">15 km</option>
+  </select>
+  <button type="button" class="sec" id="geo">Ma position</button>
+</div>
+<div id="status"></div>
+<div id="out"></div>
+<footer>Données OpenStreetMap. Les horaires dépendent des contributeurs. Vérifie par téléphone avant de te déplacer.</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = t => $("status").textContent = t;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function dist(a,b,c,d){
+  const R=6371, rad=x=>x*Math.PI/180;
+  const dLat=rad(c-a), dLon=rad(d-b);
+  const h=Math.sin(dLat/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+
+function fr(h){
+  const map={Mo:"Lun",Tu:"Mar",We:"Mer",Th:"Jeu",Fr:"Ven",Sa:"Sam",Su:"Dim",PH:"Jours fériés",off:"fermé"};
+  return h.split(";").map(s=>s.trim()).filter(Boolean)
+    .map(s=>s.replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH|off)\b/g,m=>map[m])).join("\n");
+}
+
+async function geocode(q){
+  const u="https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=be&q="+encodeURIComponent(q);
+  const r=await fetch(u,{headers:{"Accept-Language":"fr"}});
+  if(!r.ok) throw new Error("Géocodage indisponible");
+  const j=await r.json();
+  if(!j.length) throw new Error("Ville introuvable en Belgique");
+  return {lat:+j[0].lat, lon:+j[0].lon, name:j[0].display_name.split(",").slice(0,2).join(",")};
+}
+
+async function overpass(lat,lon,rad){
+  const q=`[out:json][timeout:25];
+(
+ nwr(around:${rad},${lat},${lon})["amenity"~"fast_food|restaurant|cafe"]["cuisine"~"fries|friture|chips|fish_and_chips",i];
+ nwr(around:${rad},${lat},${lon})["name"~"friterie|frituur|fritkot|friture|frit|baraque à frites",i];
+);
+out center tags;`;
+  const r=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(q)});
+  if(!r.ok) throw new Error("Service de données occupé, réessaie dans un instant");
+  return (await r.json()).elements;
+}
+
+function render(items,lat,lon){
+  const out=$("out"); out.innerHTML="";
+  if(!items.length){ out.innerHTML='<p class="none">Aucune friterie trouvée. Augmente le rayon.</p>'; return; }
+  items.forEach(e=>{
+    const t=e.tags||{};
+    const name=t.name||"Friterie (sans nom)";
+    const addr=[t["addr:street"],t["addr:housenumber"],t["addr:city"]].filter(Boolean).join(" ");
+    const phone=t.phone||t["contact:phone"];
+    const hours=t.opening_hours?esc(fr(t.opening_hours)):'<span class="none">Horaires non renseignés</span>';
+    const maps="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(name+" "+(addr||e.lat+","+e.lon));
+    const nav="https://www.google.com/maps/dir/?api=1&destination="+e.lat+","+e.lon+"&travelmode=walking";
+    const d=document.createElement("div"); d.className="card";
+    d.innerHTML=`<h2>${esc(name)}</h2>
+      <div class="dist">${e.d.toFixed(1)} km${addr?" · "+esc(addr):""}</div>
+      <div class="hours">${hours}</div>
+      <div class="links">
+        <a href="${maps}" target="_blank" rel="noopener">Fiche Google</a>
+        <a href="${nav}" target="_blank" rel="noopener">Itinéraire</a>
+        ${phone?`<a href="tel:${esc(phone.replace(/\s/g,""))}">${esc(phone)}</a>`:""}
+      </div>`;
+    out.appendChild(d);
+  });
+}
+
+async function run(lat,lon,label){
+  try{
+    status("Recherche autour de "+label+"...");
+    const els=await overpass(lat,lon,+$("r").value);
+    const seen=new Set(), items=[];
+    els.forEach(e=>{
+      const la=e.lat??e.center?.lat, lo=e.lon??e.center?.lon;
+      if(la==null||seen.has(e.type+e.id)) return;
+      seen.add(e.type+e.id);
+      e.lat=la; e.lon=lo; e.d=dist(lat,lon,la,lo); items.push(e);
+    });
+    items.sort((a,b)=>a.d-b.d);
+    status(items.length+" résultat(s) autour de "+label);
+    render(items,lat,lon);
+  }catch(err){ status("Erreur : "+err.message); }
+}
+
+$("f").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  try{
+    status("Localisation...");
+    const g=await geocode($("q").value.trim());
+    run(g.lat,g.lon,g.name);
+  }catch(err){ status("Erreur : "+err.message); }
+});
+
+$("geo").addEventListener("click",()=>{
+  if(!navigator.geolocation){ status("Géolocalisation non disponible"); return; }
+  status("Position en cours...");
+  navigator.geolocation.getCurrentPosition(
+    p=>run(p.coords.latitude,p.coords.longitude,"ta position"),
+    ()=>status("Position refusée"));
+});
+</script>
+</body>
+</html>
