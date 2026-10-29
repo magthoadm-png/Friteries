@@ -1,4 +1,4 @@
-<!doctype html>
+
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -35,12 +35,12 @@
 </head>
 <body>
 <h1>Friteries autour d'une ville</h1>
-
+ 
 <div class="box">
   <input type="text" id="q" placeholder="Code postal ou début du nom (ex. 7100, Durb)" autocomplete="off" inputmode="text">
   <div id="sug"></div>
 </div>
-
+ 
 <div class="row">
   <label for="r">Rayon</label>
   <select id="r">
@@ -57,40 +57,40 @@
   <label><input type="checkbox" class="flt" value="snack" checked> Snacks</label>
   <label><input type="checkbox" class="flt" value="sandwicherie" checked> Sandwicheries</label>
 </div>
-
+ 
 <div id="status"></div>
 <div id="out"></div>
 <footer>Données OpenStreetMap. Les horaires dépendent des contributeurs. Vérifie par téléphone avant de te déplacer.</footer>
-
+ 
 <script>
 const $ = id => document.getElementById(id);
 const setStatus = t => $("status").textContent = t;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-
+ 
 let current = null;   // {lat, lon, label}
 let timer = null;
 let reqId = 0;
-
+ 
 function dist(a,b,c,d){
   const R=6371, rad=x=>x*Math.PI/180;
   const dLat=rad(c-a), dLon=rad(d-b);
   const h=Math.sin(dLat/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(h));
 }
-
+ 
 function fr(h){
   const map={Mo:"Lun",Tu:"Mar",We:"Mer",Th:"Jeu",Fr:"Ven",Sa:"Sam",Su:"Dim",PH:"Jours fériés",off:"fermé"};
   return h.split(";").map(s=>s.trim()).filter(Boolean)
     .map(s=>s.replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH|off)\b/g,m=>map[m])).join("\n");
 }
-
+ 
 async function fetchT(url, opts, ms){
   const c = new AbortController();
   const t = setTimeout(()=>c.abort(), ms);
   try { return await fetch(url, {...opts, signal:c.signal}); }
   finally { clearTimeout(t); }
 }
-
+ 
 /* ---------- Suggestions ---------- */
 async function suggest(text){
   const t = text.trim();
@@ -127,7 +127,7 @@ async function suggest(text){
   }
   return out.slice(0,8);
 }
-
+ 
 function showSug(list){
   const box = $("sug");
   if (!list.length) { box.style.display="none"; return; }
@@ -140,14 +140,14 @@ function showSug(list){
   });
   box.style.display = "block";
 }
-
+ 
 function pick(s){
   $("sug").style.display = "none";
   $("q").value = s.main + (s.sub ? " ("+s.sub.split(" · ")[0]+")" : "");
   current = {lat:s.lat, lon:s.lon, label:s.main};
   run();
 }
-
+ 
 $("q").addEventListener("input", ()=>{
   clearTimeout(timer);
   const v = $("q").value;
@@ -163,18 +163,18 @@ $("q").addEventListener("input", ()=>{
     } catch(e){ if (id === reqId) setStatus("Erreur : "+e.message); }
   }, 350);
 });
-
+ 
 document.addEventListener("click", e=>{
   if (!e.target.closest(".box")) $("sug").style.display = "none";
 });
-
+ 
 /* ---------- Overpass avec serveurs de secours ---------- */
 const SERVERS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter"
 ];
-
+ 
 async function overpass(lat, lon, rad){
   const q = `[out:json][timeout:20];
 (
@@ -197,7 +197,7 @@ out center tags;`;
   }
   throw new Error("Tous les serveurs sont indisponibles ou lents ("+(lastErr && lastErr.name==="AbortError" ? "délai dépassé" : (lastErr ? lastErr.message : "inconnu"))+"). Appuie sur Relancer.");
 }
-
+ 
 /* ---------- Catégories ---------- */
 const LABELS = {friterie:"Friterie", snack:"Snack", sandwicherie:"Sandwicherie"};
 function cats(t){
@@ -218,7 +218,7 @@ document.querySelectorAll(".flt").forEach(x=>x.addEventListener("change", ()=>{
   const n = document.querySelectorAll("#out .card").length;
   if (current) setStatus(n+" résultat(s) autour de "+current.label);
 }));
-
+ 
 /* ---------- Affichage ---------- */
 function render(all){
   const out = $("out"); out.innerHTML = "";
@@ -245,7 +245,7 @@ function render(all){
     out.appendChild(d);
   });
 }
-
+ 
 async function run(){
   if (!current) return;
   const {lat, lon, label} = current;
@@ -269,10 +269,10 @@ async function run(){
     $("again").style.display = "inline-block";
   }
 }
-
+ 
 $("again").addEventListener("click", run);
 $("r").addEventListener("change", ()=>{ if (current) run(); });
-
+ 
 $("geo").addEventListener("click", ()=>{
   if (!navigator.geolocation) { setStatus("Géolocalisation non disponible"); return; }
   setStatus("Position en cours...");
